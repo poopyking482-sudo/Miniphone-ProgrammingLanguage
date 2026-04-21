@@ -157,7 +157,7 @@ sayHi
 MP-Lang/
 ├── mp.py           ← the interpreter
 ├── README.md       ← this file
-├── LICENSE         ← MIT License
+├── LICENSE         ← Apache License
 ├── mpkg.json       ← installed packages
 └── examples/
     ├── hello.mp
@@ -168,6 +168,6 @@ MP-Lang/
 ---
 
 ## 📜 License
-MIT License — Copyright (c) 2026 KielSir
+Apache License — Copyright (c) 2026 MP Corporations.
 
-Free to use, modify, and share. Just give credit! 🥶
+Free to use, modify, and share. Just give credit! 
