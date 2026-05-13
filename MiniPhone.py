@@ -6,7 +6,9 @@ import sys
 import math
 import random
 import json
+import atexit
 import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 
 __version__ = "1.2"
@@ -19,6 +21,28 @@ def _load_mp_stdlib_module():
     return module
 
 mp_stdlib = _load_mp_stdlib_module()
+
+
+def cleanup_pycache():
+    repo_root = Path(__file__).resolve().parent
+    for cache_dir in repo_root.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            for item in cache_dir.iterdir():
+                try:
+                    item.unlink()
+                except OSError:
+                    pass
+            try:
+                cache_dir.rmdir()
+            except OSError:
+                pass
+    for pyc_file in repo_root.glob("*.pyc"):
+        try:
+            pyc_file.unlink()
+        except OSError:
+            pass
+
+atexit.register(cleanup_pycache)
 
 # -------------------------
 # Runtime / Environment
