@@ -6,6 +6,19 @@ import sys
 import math
 import random
 import json
+import importlib.util
+from types import SimpleNamespace
+
+__version__ = "1.2"
+
+def _load_mp_stdlib_module():
+    stdlib_path = os.path.join(os.path.dirname(__file__), "mp.stdlib.py")
+    spec = importlib.util.spec_from_file_location("mp_stdlib", stdlib_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+mp_stdlib = _load_mp_stdlib_module()
 
 # -------------------------
 # Runtime / Environment
@@ -53,17 +66,43 @@ mp_math = {
 modules["math"] = mp_math
 
 # -------------------------
-# MPKG
+# PKG installers
 # -------------------------
 MPKG_FILE = "mpkg.json"
+PYKG_FILE = "pykg.json"
 
-def mpkg_install(package_name):
-    print(f"Installing '{package_name}'...")
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", package_name],
-        capture_output=True, text=True
-    )
-    if result.returncode == 0:
+
+def _pip_install(package_name):
+    try:
+        from pip._internal.cli.main import main as pip_main
+    except ImportError:
+        try:
+            from pip._internal import main as pip_main
+        except ImportError:
+            return None, "pip internal API unavailable"
+    try:
+        return pip_main(["install", package_name]), None
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def pykg_install(package_name):
+    print(f"Installing Python package '{package_name}'...")
+    returncode, error = _pip_install(package_name)
+    stderr = ""
+    if returncode is None:
+        print("Warning: pip internal API unavailable; falling back to subprocess.")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", package_name],
+            capture_output=True, text=True
+        )
+        returncode = result.returncode
+        stderr = result.stderr.strip()
+    elif error:
+        returncode = 1
+        stderr = error
+
+    if returncode == 0:
         print(f"✓ '{package_name}' installed successfully.")
         try:
             imported = __import__(package_name)
@@ -71,16 +110,44 @@ def mpkg_install(package_name):
             print(f"✓ '{package_name}' loaded into MP.")
         except ImportError:
             print(f"⚠ Installed but couldn't auto-import '{package_name}' (name mismatch).")
-        # Save to mpkg.json
+        # Save to pykg.json
         data = {}
-        if os.path.exists(MPKG_FILE):
-            with open(MPKG_FILE) as f:
+        if os.path.exists(PYKG_FILE):
+            with open(PYKG_FILE) as f:
                 data = json.load(f)
         data.setdefault("dependencies", {})[package_name] = "latest"
-        with open(MPKG_FILE, "w") as f:
+        with open(PYKG_FILE, "w") as f:
             json.dump(data, f, indent=2)
     else:
-        print(f"✗ Install failed:\n{result.stderr.strip()}")
+        print(f"✗ Install failed:\n{stderr}")
+
+
+def mpkg_install(package_name):
+    print(f"Installing MP standard library package '{package_name}'...")
+    alias = package_name
+    if not alias.startswith("std/"):
+        alias = f"std/{package_name}"
+
+    std_mod = mp_stdlib.load_std_module(alias)
+    if std_mod is None:
+        print(f"Error: MP stdlib package '{package_name}' not found.")
+        return
+
+    # Expose standard library package as a module object
+    from types import SimpleNamespace
+    module_obj = SimpleNamespace(**std_mod)
+    mod_name = package_name if not package_name.startswith("std/") else package_name.split("/", 1)[1]
+    modules[mod_name] = module_obj
+    print(f"✓ '{package_name}' loaded into MP as '{mod_name}'.")
+
+    # Save to mpkg.json
+    data = {}
+    if os.path.exists(MPKG_FILE):
+        with open(MPKG_FILE) as f:
+            data = json.load(f)
+    data.setdefault("dependencies", {})[package_name] = "builtin"
+    with open(MPKG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 # -------------------------
 # Helper Functions
@@ -95,13 +162,25 @@ def replace_vars(text):
         for token in tokens
     )
 
+
+def _module_to_mapping(module):
+    if isinstance(module, dict):
+        return module
+    if hasattr(module, "__dict__"):
+        return module.__dict__
+    try:
+        return dict(module)
+    except Exception:
+        return {}
+
+
 def evaluate(expr):
     expr = replace_vars(expr)
     namespace = {k: v for k, v in variables.items()}
     namespace.update({k: v for k, v in modules.items()})
     # Flatten math module so sin(), cos() etc. are callable directly
     if "math" in modules:
-        namespace.update(modules["math"])
+        namespace.update(_module_to_mapping(modules["math"]))
     try:
         return eval(expr, {"__builtins__": {}}, namespace)
     except Exception as e:
@@ -241,12 +320,22 @@ def execute_lines(lines, start, end=None):
         # --- #import module ---
         if stripped.startswith("#import "):
             mod = stripped[8:].strip()
-            try:
-                imported = __import__(mod)
-                modules[mod] = imported
-                print(f"Imported '{mod}' successfully.")
-            except ImportError:
-                print(f"Error: Module '{mod}' not found.")
+            if mod.startswith("std/"):
+                std_mod = mp_stdlib.load_std_module(mod)
+                if std_mod is not None:
+                    if "std" not in modules:
+                        modules["std"] = SimpleNamespace()
+                    setattr(modules["std"], mod.split("/", 1)[1], SimpleNamespace(**std_mod))
+                    print(f"Imported '{mod}' successfully.")
+                else:
+                    print(f"Error: Standard module '{mod}' not found.")
+            else:
+                try:
+                    imported = __import__(mod)
+                    modules[mod] = imported
+                    print(f"Imported '{mod}' successfully.")
+                except ImportError:
+                    print(f"Error: Module '{mod}' not found.")
             i += 1
             continue
 
@@ -254,6 +343,13 @@ def execute_lines(lines, start, end=None):
         if stripped.startswith("mpkg install "):
             pkg = stripped[13:].strip()
             mpkg_install(pkg)
+            i += 1
+            continue
+
+        # --- pykg install ---
+        if stripped.startswith("pykg install "):
+            pkg = stripped[13:].strip()
+            pykg_install(pkg)
             i += 1
             continue
 

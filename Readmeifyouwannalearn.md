@@ -84,7 +84,8 @@ greet               // call the function
 
 ### 📥 Packages
 ```mp
-mpkg install requests       // installs from pip
+pykg install requests       // installs from Python/pip
+mpkg install math           // installs builtin MP stdlib package
 ```
 
 ### 🐍 Raw Python blocks
