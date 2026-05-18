@@ -1,3 +1,4 @@
+
 import os
 import re
 import subprocess
@@ -14,7 +15,8 @@ from types import SimpleNamespace
 __version__ = "1.2"
 
 def _load_mp_stdlib_module():
-    stdlib_path = os.path.join(os.path.dirname(__file__), "mp.stdlib.py")
+    # Changed from "mp.stdlib.py" to "mp_stdlib.py"
+    stdlib_path = os.path.join(os.path.dirname(__file__), "mp_stdlib.py")
     spec = importlib.util.spec_from_file_location("mp_stdlib", stdlib_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
