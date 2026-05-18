@@ -1,1 +1,2 @@
 ⚠️ **CRITICAL STEP:** Do not move `miniphone.py` out of its folder! It needs `mp_stdlib.py` to be in the exact same folder to run. If you move it to your Desktop or Downloads folder by itself, it will crash.
+Edit:Or put it in your folders.
