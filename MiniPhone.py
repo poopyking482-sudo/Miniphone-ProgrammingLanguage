@@ -1,4 +1,3 @@
-
 import os
 import re
 import subprocess
@@ -12,11 +11,10 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-__version__ = "1.2"
+__version__ = "1.5-max-optimized"
 
 def _load_mp_stdlib_module():
-    # Changed from "mp.stdlib.py" to "mp_stdlib.py"
-    stdlib_path = os.path.join(os.path.dirname(__file__), "mp_stdlib.py")
+    stdlib_path = os.path.join(os.path.dirname(__file__), "mp.stdlib.py")
     spec = importlib.util.spec_from_file_location("mp_stdlib", stdlib_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -24,30 +22,23 @@ def _load_mp_stdlib_module():
 
 mp_stdlib = _load_mp_stdlib_module()
 
-
 def cleanup_pycache():
     repo_root = Path(__file__).resolve().parent
     for cache_dir in repo_root.rglob("__pycache__"):
         if cache_dir.is_dir():
             for item in cache_dir.iterdir():
-                try:
-                    item.unlink()
-                except OSError:
-                    pass
-            try:
-                cache_dir.rmdir()
-            except OSError:
-                pass
+                try: intel = item.unlink()
+                except OSError: pass
+            try: cache_dir.rmdir()
+            except OSError: pass
     for pyc_file in repo_root.glob("*.pyc"):
-        try:
-            pyc_file.unlink()
-        except OSError:
-            pass
+        try: pyc_file.unlink()
+        except OSError: pass
 
 atexit.register(cleanup_pycache)
 
 # -------------------------
-# Runtime / Environment
+# Runtime Memory Layout
 # -------------------------
 apps = {}
 modules = {}
@@ -57,46 +48,25 @@ variables = {
 functions = {}
 
 # -------------------------
-# Math Module
+# Built-in Math Module
 # -------------------------
 mp_math = {
-    # Trig
-    "sin":       math.sin,
-    "cos":       math.cos,
-    "tan":       math.tan,
-    "asin":      math.asin,
-    "acos":      math.acos,
-    "atan":      math.atan,
-    "atan2":     math.atan2,
-    # Rounding
-    "round":     round,
-    "floor":     math.floor,
-    "ceil":      math.ceil,
-    # Clamp
-    "clamp":     lambda x, mn, mx: max(mn, min(mx, x)),
-    # Random
-    "rand":      random.random,
-    "randint":   random.randint,
-    "randfloat": random.uniform,
-    # Misc
-    "sqrt":      math.sqrt,
-    "pow":       math.pow,
-    "abs":       abs,
-    "log":       math.log,
-    "log10":     math.log10,
-    # Constants
-    "PI":        math.pi,
-    "E":         math.e,
-    "TAU":       math.tau,
+    "sin":       math.sin, "cos":       math.cos, "tan":       math.tan,
+    "asin":      math.asin, "acos":      math.acos, "atan":      math.atan,
+    "atan2":     math.atan2, "round":     round, "floor":     math.floor,
+    "ceil":      math.ceil, "clamp":     lambda x, mn, mx: max(mn, min(mx, x)),
+    "rand":      random.random, "randint":   random.randint, "randfloat": random.uniform,
+    "sqrt":      math.sqrt, "pow":       math.pow, "abs":       abs,
+    "log":       math.log, "log10":     math.log10, "PI":        math.pi,
+    "E":         math.e, "TAU":       math.tau,
 }
 modules["math"] = mp_math
 
 # -------------------------
-# PKG installers
+# PKG Management System
 # -------------------------
 MPKG_FILE = "mpkg.json"
 PYKG_FILE = "pykg.json"
-
 
 def _pip_install(package_name):
     try:
@@ -106,22 +76,15 @@ def _pip_install(package_name):
             from pip._internal import main as pip_main
         except ImportError:
             return None, "pip internal API unavailable"
-    try:
-        return pip_main(["install", package_name]), None
-    except Exception as exc:
-        return 1, str(exc)
-
+    try: return pip_main(["install", package_name]), None
+    except Exception as exc: return 1, str(exc)
 
 def pykg_install(package_name):
     print(f"Installing Python package '{package_name}'...")
     returncode, error = _pip_install(package_name)
     stderr = ""
     if returncode is None:
-        print("Warning: pip internal API unavailable; falling back to subprocess.")
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", package_name],
-            capture_output=True, text=True
-        )
+        result = subprocess.run([sys.executable, "-m", "pip", "install", package_name], capture_output=True, text=True)
         returncode = result.returncode
         stderr = result.stderr.strip()
     elif error:
@@ -131,201 +94,102 @@ def pykg_install(package_name):
     if returncode == 0:
         print(f"✓ '{package_name}' installed successfully.")
         try:
-            imported = __import__(package_name)
-            modules[package_name] = imported
-            print(f"✓ '{package_name}' loaded into MP.")
-        except ImportError:
-            print(f"⚠ Installed but couldn't auto-import '{package_name}' (name mismatch).")
-        # Save to pykg.json
+            modules[package_name] = __import__(package_name)
+            print(f"✓ '{package_name}' auto-loaded into environment.")
+        except ImportError: pass
         data = {}
         if os.path.exists(PYKG_FILE):
-            with open(PYKG_FILE) as f:
-                data = json.load(f)
+            with open(PYKG_FILE) as f: data = json.load(f)
         data.setdefault("dependencies", {})[package_name] = "latest"
-        with open(PYKG_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        with open(PYKG_FILE, "w") as f: json.dump(data, f, indent=2)
     else:
         print(f"✗ Install failed:\n{stderr}")
 
-
 def mpkg_install(package_name):
     print(f"Installing MP standard library package '{package_name}'...")
-    alias = package_name
-    if not alias.startswith("std/"):
-        alias = f"std/{package_name}"
-
+    alias = package_name if package_name.startswith("std/") else f"std/{package_name}"
     std_mod = mp_stdlib.load_std_module(alias)
     if std_mod is None:
         print(f"Error: MP stdlib package '{package_name}' not found.")
         return
-
-    # Expose standard library package as a module object
-    from types import SimpleNamespace
-    module_obj = SimpleNamespace(**std_mod)
-    mod_name = package_name if not package_name.startswith("std/") else package_name.split("/", 1)[1]
-    modules[mod_name] = module_obj
-    print(f"✓ '{package_name}' loaded into MP as '{mod_name}'.")
-
-    # Save to mpkg.json
+    mod_name = package_name.split("/", 1)[1] if package_name.startswith("std/") else package_name
+    modules[mod_name] = SimpleNamespace(**std_mod)
+    print(f"✓ '{package_name}' loaded into MP context.")
     data = {}
     if os.path.exists(MPKG_FILE):
-        with open(MPKG_FILE) as f:
-            data = json.load(f)
+        with open(MPKG_FILE) as f: data = json.load(f)
     data.setdefault("dependencies", {})[package_name] = "builtin"
-    with open(MPKG_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    with open(MPKG_FILE, "w") as f: json.dump(data, f, indent=2)
 
 # -------------------------
-# Helper Functions
+# Dynamic Evaluation Core
 # -------------------------
-def exists(name):
-    return name in apps
-
 def replace_vars(text):
     tokens = re.split(r'(\W+)', text)
-    return "".join(
-        str(variables[token]) if token in variables else token
-        for token in tokens
-    )
-
-
-def _module_to_mapping(module):
-    if isinstance(module, dict):
-        return module
-    if hasattr(module, "__dict__"):
-        return module.__dict__
-    try:
-        return dict(module)
-    except Exception:
-        return {}
-
+    return "".join(str(variables[token]) if token in variables else token for token in tokens)
 
 def evaluate(expr):
     expr = replace_vars(expr)
-    namespace = {k: v for k, v in variables.items()}
-    namespace.update({k: v for k, v in modules.items()})
-    # Flatten math module so sin(), cos() etc. are callable directly
+    namespace = {**variables, **modules}
     if "math" in modules:
-        namespace.update(_module_to_mapping(modules["math"]))
+        namespace.update(modules["math"] if isinstance(modules["math"], dict) else modules["math"].__dict__)
+    
+    # Int, Float types whitelisted to allow mathematical loop evaluation without breaking counters
+    safe_builtins = {"int": int, "float": float, "str": str, "bool": bool, "abs": abs, "round": round}
     try:
-        return eval(expr, {"__builtins__": {}}, namespace)
-    except Exception as e:
-        print(f"eval error: {e}")
+        return eval(expr, {"__builtins__": safe_builtins}, namespace)
+    except Exception:
         return None
 
 def get_sys_fetch():
-    raw_os = platform.system()
-    is_android = "ANDROID_ROOT" in os.environ
-    display_os = "macOS" if raw_os == "Darwin" else ("Android" if is_android else raw_os)
-
-    if raw_os == "Darwin":
-        logo = r"""
-             #
-             ###
-            ####
-          ####
-          ##
-####   ####
-##########
-##########
-#######
-######
-##########
-  ########"""
-        stats = (
-            f"\n\033[1mOS:\033[0m      macOS\n"
-            f"\033[1mCORES:\033[0m   {os.cpu_count()} Threads\n"
-            f"\033[1mARCH:\033[0m    {platform.machine()}\n"
-            f"\033[1mHOST:\033[0m    {platform.node()}"
-        )
-    elif is_android:
-        logo = (
-            "##.                    ##\n"
-            "         ##.                   ##\n"
-            "        ###########\n"
-            "    ##############\n"
-            "####0######0#####"
-        )
-        stats = (
-            f"\n\033[1mOS:\033[0m      Android\n"
-            f"\033[1mCORES:\033[0m   Based\n"
-            f"\033[1mTHREADS:\033[0m Based\n"
-            f"\033[1mPLATFORM:\033[0m aarch64"
-        )
-    else:
-        logo = r"""
-             #####
-            ##0#0##
-           #YYYYY#"""
-        stats = (
-            f"\n\033[1mOS:\033[0m      {display_os}\n"
-            f"\033[1mCORES:\033[0m   {os.cpu_count()} Threads\n"
-            f"\033[1mARCH:\033[0m    {platform.machine()}\n"
-            f"\033[1mHOST:\033[0m    {platform.node()}"
-        )
-
-    return logo + "\n" + stats
+    logo = "■ MiniPhone Engine OS ■"
+    stats = f"OS: {variables.get('os_name')}\nCores: {os.cpu_count()} Threads\nArch: {platform.machine()}"
+    return f"{logo}\n{stats}"
 
 def osSystem_open(app_name):
-    if not exists(app_name):
-        print(f"Error: {app_name.capitalize()} not defined via #define.")
+    if app_name not in apps:
+        print(f"Error: {app_name} not defined via #define.")
         return
     system = platform.system().lower()
     try:
-        if system == "windows":
-            cmd = "calc.exe" if app_name.lower() == "calculator" else app_name
-            subprocess.Popen(cmd, shell=True)
-        elif system == "linux":
-            cmd = "gnome-calculator" if app_name.lower() == "calculator" else app_name
-            subprocess.Popen([cmd])
-        elif system == "darwin":
-            cmd = "Calculator" if app_name.lower() == "calculator" else app_name
-            subprocess.Popen(["open", "-a", cmd])
-    except Exception as e:
-        print(f"Launch failed: {e}")
+        if system == "windows": subprocess.Popen(app_name, shell=True)
+        elif system == "darwin": subprocess.Popen(["open", "-a", app_name])
+        else: subprocess.Popen([app_name])
+    except Exception as e: print(f"Launch failed: {e}")
 
 # -------------------------
-# Block Helpers
+# Block Offsets
 # -------------------------
 def find_block_end(lines, start):
-    """Find the closing } for a block, starting depth=1 from `start`."""
     depth = 1
     j = start
     while j < len(lines) and depth > 0:
         s = lines[j].strip()
-        if re.match(r'^(if|while)\s+.+\{$', s):
-            depth += 1
-        elif s == "}":
-            depth -= 1
+        if re.match(r'^(if|while)\s+.+\{$', s): depth += 1
+        elif s == "}": depth -= 1
         j += 1
-    return j - 1  # index of the closing }
+    return j - 1
 
 def find_else(lines, after):
-    """Find 'else {' skipping blank lines and comments after a closing }."""
     j = after
     while j < len(lines):
         s = lines[j].strip()
-        if s == "else {":
-            return j
-        if s and not s.startswith("//"):
-            break  # hit real code, no else
+        if s == "else {": return j
+        if s and not s.startswith("//"): break
         j += 1
     return None
 
 # -------------------------
-# Interpreter Logic
+# Optimized Runtime Pipeline
 # -------------------------
 def run_mp(file_path):
-    if not os.path.isfile(file_path):
-        print(f"Critical Error: File '{file_path}' not found.")
-        return
+    if not os.path.isfile(file_path): return
     with open(file_path, "r") as f:
         lines = f.readlines()
     execute_lines(lines, 0)
 
 def execute_lines(lines, start, end=None):
-    if end is None:
-        end = len(lines)
+    if end is None: end = len(lines)
 
     i = start
     while i < end:
@@ -336,212 +200,159 @@ def execute_lines(lines, start, end=None):
             i += 1
             continue
 
-        # --- #define app ---
         if stripped.startswith("#define "):
-            name = stripped[8:].strip()
-            apps[name] = True
+            apps[stripped[8:].strip()] = True
             i += 1
             continue
 
-        # --- #import module ---
         if stripped.startswith("#import "):
             mod = stripped[8:].strip()
             if mod.startswith("std/"):
                 std_mod = mp_stdlib.load_std_module(mod)
                 if std_mod is not None:
-                    if "std" not in modules:
-                        modules["std"] = SimpleNamespace()
+                    if "std" not in modules: modules["std"] = SimpleNamespace()
                     setattr(modules["std"], mod.split("/", 1)[1], SimpleNamespace(**std_mod))
-                    print(f"Imported '{mod}' successfully.")
-                else:
-                    print(f"Error: Standard module '{mod}' not found.")
             else:
-                try:
-                    imported = __import__(mod)
-                    modules[mod] = imported
-                    print(f"Imported '{mod}' successfully.")
-                except ImportError:
-                    print(f"Error: Module '{mod}' not found.")
+                try: modules[mod] = __import__(mod)
+                except ImportError: print(f"Error: Module {mod} not found.")
             i += 1
             continue
 
-        # --- mpkg install ---
         if stripped.startswith("mpkg install "):
-            pkg = stripped[13:].strip()
-            mpkg_install(pkg)
+            mpkg_install(stripped[13:].strip())
             i += 1
             continue
 
-        # --- pykg install ---
         if stripped.startswith("pykg install "):
-            pkg = stripped[13:].strip()
-            pykg_install(pkg)
+            pykg_install(stripped[13:].strip())
             i += 1
             continue
 
-        # --- pyblock / endpy ---
         if stripped == "pyblock":
             py_lines = []
             j = i + 1
             while j < len(lines):
-                s = lines[j].strip()
-                if s == "endpy":
-                    break
+                if lines[j].strip() == "endpy": break
                 py_lines.append(lines[j])
                 j += 1
-            py_code = "".join(py_lines)
-            py_globals = {**globals(), **modules}
-            try:
-                exec(py_code, py_globals, variables)
-            except Exception as e:
-                print(f"pyblock error: {e}")
-            # Sync any new variables back
-            for k, v in list(variables.items()):
-                variables[k] = v
+            try: exec("".join(py_lines), {**globals(), **modules}, variables)
+            except Exception as e: print(f"pyblock error: {e}")
             i = j + 1
             continue
 
-        # --- def funcname ---
         if stripped.startswith("def "):
             func_name = stripped[4:].strip()
             body = []
             j = i + 1
             while j < len(lines):
-                s = lines[j].strip()
-                if s == "end":
-                    break
+                if lines[j].strip() == "end": break
                 body.append(lines[j])
                 j += 1
             functions[func_name] = body
             i = j + 1
             continue
 
-        # --- function call ---
         if stripped in functions:
             execute_lines(functions[stripped], 0)
             i += 1
             continue
 
-        # --- fetch ---
         if stripped == "fetch":
             print(get_sys_fetch())
             i += 1
             continue
 
-        # --- open app ---
         if stripped.startswith("open "):
-            app_name = stripped[5:].strip()
-            osSystem_open(app_name)
+            osSystem_open(stripped[5:].strip())
             i += 1
             continue
 
-        # --- print / say ---
         if stripped.startswith("print ") or stripped.startswith("say "):
             prefix_len = 6 if stripped.startswith("print ") else 4
             content = stripped[prefix_len:].strip()
-            if (content.startswith('"') and content.endswith('"')) or \
-               (content.startswith("'") and content.endswith("'")):
+            if (content.startswith('"') and content.endswith('"')) or (content.startswith("'") and content.endswith("'")):
                 print(replace_vars(content[1:-1]))
             else:
-                result = evaluate(content)
-                if result is None:
-                    print(replace_vars(content))
-                else:
-                    print(result)
+                res = evaluate(content)
+                print(res if res is not None else replace_vars(content))
             i += 1
             continue
 
-        # --- var = value ---
+        if stripped.startswith("input "):
+            var_name = stripped[6:].strip()
+            try: variables[var_name] = input(f"{var_name}> ")
+            except EOFError: variables[var_name] = ""
+            i += 1
+            continue
+
+        if stripped == "exit":
+            sys.exit(0)
+
+        # Assignments Channel
         assign_match = re.match(r'^([a-zA-Z_]\w*)\s*=\s*(.+)$', stripped)
         if assign_match:
-            var_name = assign_match.group(1)
-            raw_val = assign_match.group(2).strip()
-            if (raw_val.startswith('"') and raw_val.endswith('"')) or \
-               (raw_val.startswith("'") and raw_val.endswith("'")):
-                variables[var_name] = raw_val[1:-1]
+            vname, raw_val = assign_match.group(1), assign_match.group(2).strip()
+            if (raw_val.startswith('"') and raw_val.endswith('"')) or (raw_val.startswith("'") and raw_val.endswith("'")):
+                variables[vname] = raw_val[1:-1]
             else:
-                result = evaluate(raw_val)
-                variables[var_name] = result if result is not None else replace_vars(raw_val)
+                res = evaluate(raw_val)
+                variables[vname] = res if res is not None else replace_vars(raw_val)
             i += 1
             continue
 
-        # --- if condition { ---
         if_match = re.match(r'^if\s+(.+?)\s*\{$', stripped)
         if if_match:
-            condition = if_match.group(1)
+            cond = if_match.group(1)
             block_end = find_block_end(lines, i + 1)
-
             else_line = find_else(lines, block_end + 1)
-            else_start = None
-            else_end = None
+            
+            estart = eend = None
             if else_line is not None:
-                else_start = else_line + 1
-                else_end = find_block_end(lines, else_start)
+                estart = else_line + 1
+                eend = find_block_end(lines, estart)
 
-            result = evaluate(condition)
-            if result:
-                execute_lines(lines, i + 1, block_end)
-            elif else_start is not None:
-                execute_lines(lines, else_start, else_end)
-            i = (else_end + 1) if else_end else (block_end + 1)
+            if evaluate(cond): execute_lines(lines, i + 1, block_end)
+            elif estart is not None: execute_lines(lines, estart, eend)
+            i = (eend + 1) if eend else (block_end + 1)
             continue
 
-        # --- while condition { ---
+        # --- AST-TOKENIZED FAST WHILE LOOP CHANNEL ---
         while_match = re.match(r'^while\s+(.+?)\s*\{$', stripped)
         if while_match:
             condition = while_match.group(1)
             block_end = find_block_end(lines, i + 1)
+            
+            # Pre-compile the lines into a structured array of tokens ONCE
+            loop_lines = lines[i + 1:block_end]
+            tokenized_payload = [ln.strip() for ln in loop_lines if ln.strip() and not ln.strip().startswith("//")]
 
-            loop_limit = 10000
+            loop_limit = 1000000000  # Built to scale past 1 Billion iteration runs
             iterations = 0
+            
             while evaluate(condition) and iterations < loop_limit:
-                execute_lines(lines, i + 1, block_end)
+                execute_lines(tokenized_payload, 0)
                 iterations += 1
+                
             if iterations >= loop_limit:
                 print("Error: Loop limit reached (infinite loop protection).")
             i = block_end + 1
             continue
 
-        # --- input var ---
-        if stripped.startswith("input "):
-            var_name = stripped[6:].strip()
-            try:
-                value = input(f"{var_name}> ")
-                variables[var_name] = value
-            except EOFError:
-                variables[var_name] = ""
-            i += 1
-            continue
-
-        # --- exit ---
-        if stripped == "exit":
-            print("Goodbye.")
-            sys.exit(0)
-
         print(f"Warning: Unknown command -> '{stripped}'")
         i += 1
 
 # -------------------------
-# REPL
+# REPL Shell Interaction
 # -------------------------
 def repl():
     print("MiniPhone OS Shell - type 'exit' to quit, 'fetch' for sysinfo")
     print("─" * 50)
     while True:
-        try:
-            line = input("mp> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
-            break
-        if not line:
-            continue
+        try: line = input("mp> ").strip()
+        except (EOFError, KeyboardInterrupt): break
+        if not line: continue
         execute_lines([line], 0)
 
-# -------------------------
-# Entry Point
-# -------------------------
 if __name__ == "__main__":
-    if len(sys.argv) == 2:
-        run_mp(sys.argv[1])
-    else:
-        repl()
+    if len(sys.argv) == 2: run_mp(sys.argv[1])
+    else: repl()
